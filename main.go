@@ -22,7 +22,7 @@ func init() {
 func main() {
 	app := cli.NewApp()
 	app.Author = "Rancher Labs, Inc."
-	app.Before = beforeFunc
+	// app.Before = beforeFunc
 	app.EnableBashCompletion = true
 	app.Name = os.Args[0]
 	app.Usage = fmt.Sprintf("control and configure RDNS(%s)", DNSDate)
