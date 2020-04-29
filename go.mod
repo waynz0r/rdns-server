@@ -1,5 +1,7 @@
 module github.com/rancher/rdns-server
 
+go 1.14
+
 require (
 	github.com/aws/aws-sdk-go v1.20.4
 	github.com/coredns/coredns v1.5.0

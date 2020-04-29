@@ -8,6 +8,8 @@ import (
 	"github.com/rancher/rdns-server/backend"
 	"github.com/rancher/rdns-server/backend/route53"
 	"github.com/rancher/rdns-server/database"
+	"github.com/rancher/rdns-server/database/keyvalue"
+	"github.com/rancher/rdns-server/database/keyvalue/filesystem"
 	"github.com/rancher/rdns-server/database/mysql"
 	"github.com/rancher/rdns-server/metric"
 	"github.com/rancher/rdns-server/purge"
@@ -103,6 +105,12 @@ func setDatabase(c *cli.Context) (d *mysql.Database, err error) {
 			return nil, err
 		}
 		database.SetDatabase(d)
+	case keyvalue.DriverName:
+		s, err := filesystem.New(c.String("dsn"), keyvalue.ValueTypes)
+		if err != nil {
+			return nil, err
+		}
+		database.SetDatabase(keyvalue.NewKeyValueBackend(s))
 	default:
 		return nil, errors.New("no suitable database found")
 	}
