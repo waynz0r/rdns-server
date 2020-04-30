@@ -9,17 +9,12 @@ import (
 	"github.com/coredns/coredns/plugin"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
 var log = clog.NewWithPlugin("reload")
 
-func init() {
-	caddy.RegisterPlugin("reload", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("reload", setup) }
 
 // the info reload is global to all application, whatever number of reloads.
 // it is used to transmit data between Setup and start of the hook called 'onInstanceStartup'

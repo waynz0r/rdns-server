@@ -7,17 +7,11 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/metrics"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 	"github.com/miekg/dns"
 )
 
-func init() {
-	caddy.RegisterPlugin("autopath", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-
-}
+func init() { plugin.Register("autopath", setup) }
 
 func setup(c *caddy.Controller) error {
 	ap, mw, err := autoPathParse(c)

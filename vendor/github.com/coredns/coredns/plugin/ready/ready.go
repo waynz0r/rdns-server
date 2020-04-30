@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	clog "github.com/coredns/coredns/plugin/pkg/log"
+	"github.com/coredns/coredns/plugin/pkg/reuseport"
 	"github.com/coredns/coredns/plugin/pkg/uniq"
 )
 
@@ -30,11 +31,7 @@ type ready struct {
 }
 
 func (rd *ready) onStartup() error {
-	if rd.Addr == "" {
-		rd.Addr = defAddr
-	}
-
-	ln, err := net.Listen("tcp", rd.Addr)
+	ln, err := reuseport.Listen("tcp", rd.Addr)
 	if err != nil {
 		return err
 	}
@@ -49,7 +46,7 @@ func (rd *ready) onStartup() error {
 		ok, todo := plugins.Ready()
 		if ok {
 			w.WriteHeader(http.StatusOK)
-			io.WriteString(w, "OK")
+			io.WriteString(w, http.StatusText(http.StatusOK))
 			return
 		}
 		log.Infof("Still waiting on: %q", todo)
@@ -61,8 +58,6 @@ func (rd *ready) onStartup() error {
 
 	return nil
 }
-
-func (rd *ready) onRestart() error { return rd.onFinalShutdown() }
 
 func (rd *ready) onFinalShutdown() error {
 	rd.Lock()
@@ -77,5 +72,3 @@ func (rd *ready) onFinalShutdown() error {
 	rd.done = false
 	return nil
 }
-
-const defAddr = ":8181"

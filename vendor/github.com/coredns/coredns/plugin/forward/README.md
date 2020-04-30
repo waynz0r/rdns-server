@@ -9,12 +9,14 @@
 The *forward* plugin re-uses already opened sockets to the upstreams. It supports UDP, TCP and
 DNS-over-TLS and uses in band health checking.
 
-When it detects an error a health check is performed. This checks runs in a loop, every *0.5s*, for
-as long as the upstream reports unhealthy. Once healthy we stop health checking (until the next
-error). The health checks use a recursive DNS query (`. IN NS`) to get upstream health. Any response
-that is not a network error (REFUSED, NOTIMPL, SERVFAIL, etc) is taken as a healthy upstream. The
-health check uses the same protocol as specified in **TO**. If `max_fails` is set to 0, no checking
-is performed and upstreams will always be considered healthy.
+When it detects an error a health check is performed. This checks runs in a loop, starting with
+a *0.5s* interval and exponentially backing off with randomized intervals up to *15s* for as long
+as the upstream reports unhealthy. The exponential backoff will reset to *0.5s* after 2 minutes.
+Once healthy we stop health checking (until the next error). The health checks use a recursive
+DNS query (`. IN NS`) to get upstream health. Any response that is not a network error (REFUSED,
+NOTIMPL, SERVFAIL, etc) is taken as a healthy upstream. The health check uses the same protocol as
+specified in **TO**. If `max_fails` is set to 0, no checking is performed and upstreams will always
+be considered healthy.
 
 When *all* upstreams are down it assumes health checking as a mechanism has failed and will try to
 connect to a random upstream (which may or may not work).
@@ -49,7 +51,8 @@ forward FROM TO... {
     tls CERT KEY CA
     tls_servername NAME
     policy random|round_robin|sequential
-    health_check DURATION
+    health_check DURATION [no_rec]
+    max_concurrent MAX
 }
 ~~~
 
@@ -82,7 +85,15 @@ forward FROM TO... {
   * `random` is a policy that implements random upstream selection.
   * `round_robin` is a policy that selects hosts based on round robin ordering.
   * `sequential` is a policy that selects hosts based on sequential ordering.
-* `health_check`, use a different **DURATION** for health checking, the default duration is 0.5s.
+* `health_check` configure the behaviour of health checking of the upstream servers
+  * `<duration>` - use a different duration for health checking, the default duration is 0.5s.
+  * `no_rec` - optional argument that sets the RecursionDesired-flag of the dns-query used in health checking to `false`.
+    The flag is default `true`.
+* `max_concurrent` **MAX** will limit the number of concurrent queries to **MAX**.  Any new query that would
+  raise the number of concurrent queries above the **MAX** will result in a SERVFAIL response. This
+  response does not count as a health failure. When choosing a value for **MAX**, pick a number
+  at least greater than the expected *upstream query rate* * *latency* of the upstream servers.
+  As an upper bound for **MAX**, consider that each concurrent query will use about 2kb of memory.
 
 Also note the TLS config is "global" for the whole forwarding proxy if you need a different
 `tls-name` for different upstreams you're out of luck.
@@ -94,19 +105,18 @@ On each endpoint, the timeouts of the communication are set by default and autom
 
 ## Metrics
 
-If monitoring is enabled (via the *prometheus* directive) then the following metric are exported:
+If monitoring is enabled (via the *prometheus* plugin) then the following metric are exported:
 
 * `coredns_forward_request_duration_seconds{to}` - duration per upstream interaction.
 * `coredns_forward_request_count_total{to}` - query count per upstream.
-* `coredns_forward_response_rcode_total{to, rcode}` - count of RCODEs per upstream.
+* `coredns_forward_response_rcode_count_total{to, rcode}` - count of RCODEs per upstream.
 * `coredns_forward_healthcheck_failure_count_total{to}` - number of failed health checks per upstream.
 * `coredns_forward_healthcheck_broken_count_total{}` - counter of when all upstreams are unhealthy,
   and we are randomly (this always uses the `random` policy) spraying to an upstream.
-* `coredns_forward_socket_count_total{to}` - number of cached sockets per upstream.
-
-Where `to` is one of the upstream servers (**TO** from the config), `proto` is the protocol used by
-the incoming query ("tcp" or "udp"), and family the transport family ("1" for IPv4, and "2" for
-IPv6).
+* `max_concurrent_reject_count_total{}` - counter of the number of queries rejected because the
+  number of concurrent queries were at maximum.
+Where `to` is one of the upstream servers (**TO** from the config), `rcode` is the returned RCODE
+from the upstream.
 
 ## Examples
 

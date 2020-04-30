@@ -7,17 +7,12 @@ import (
 	"github.com/coredns/coredns/plugin"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
 var log = clog.NewWithPlugin("loadbalance")
 
-func init() {
-	caddy.RegisterPlugin("loadbalance", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("loadbalance", setup) }
 
 func setup(c *caddy.Controller) error {
 	err := parse(c)

@@ -13,17 +13,12 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/parse"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
 var log = clog.NewWithPlugin("auto")
 
-func init() {
-	caddy.RegisterPlugin("auto", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("auto", setup) }
 
 func setup(c *caddy.Controller) error {
 	a, err := autoParse(c)
@@ -100,6 +95,7 @@ func autoParse(c *caddy.Controller) (Auto, error) {
 		for i := range a.Zones.origins {
 			a.Zones.origins[i] = plugin.Host(a.Zones.origins[i]).Normalize()
 		}
+		a.loader.upstream = upstream.New()
 
 		for c.NextBlock() {
 			switch c.Val() {
@@ -120,7 +116,7 @@ func autoParse(c *caddy.Controller) (Auto, error) {
 					}
 				}
 
-				// regexp
+				// regexp template
 				if c.NextArg() {
 					a.loader.re, err = regexp.Compile(c.Val())
 					if err != nil {
@@ -129,10 +125,10 @@ func autoParse(c *caddy.Controller) (Auto, error) {
 					if a.loader.re.NumSubexp() == 0 {
 						return a, c.Errf("Need at least one sub expression")
 					}
-				}
 
-				// template
-				if c.NextArg() {
+					if !c.NextArg() {
+						return a, c.ArgErr()
+					}
 					a.loader.template = rewriteToExpand(c.Val())
 				}
 
@@ -148,8 +144,8 @@ func autoParse(c *caddy.Controller) (Auto, error) {
 				a.loader.ReloadInterval = d
 
 			case "upstream":
+				// remove soon
 				c.RemainingArgs() // eat remaining args
-				a.loader.upstream = upstream.New()
 
 			case "transfer":
 				t, _, e := parse.Transfer(c, false)

@@ -12,8 +12,8 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/parse"
 	"github.com/coredns/coredns/plugin/pkg/transport"
 
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyfile"
+	"github.com/caddyserver/caddy"
+	"github.com/caddyserver/caddy/caddyfile"
 )
 
 const serverType = "dns"
@@ -28,7 +28,7 @@ func init() {
 		DefaultInput: func() caddy.Input {
 			return caddy.CaddyfileInput{
 				Filepath:       "Corefile",
-				Contents:       []byte(".:" + Port + " {\nwhoami\n}\n"),
+				Contents:       []byte(".:" + Port + " {\nwhoami\nlog\n}\n"),
 				ServerTypeName: serverType,
 			}
 		},
@@ -51,6 +51,9 @@ func (h *dnsContext) saveConfig(key string, cfg *Config) {
 	h.configs = append(h.configs, cfg)
 	h.keysToConfigs[key] = cfg
 }
+
+// Compile-time check to ensure dnsContext implements the caddy.Context interface
+var _ caddy.Context = &dnsContext{}
 
 // InspectServerBlocks make sure that everything checks out before
 // executing directives and otherwise prepares the directives to

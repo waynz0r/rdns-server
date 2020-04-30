@@ -7,6 +7,7 @@ import (
 
 // Service is a stripped down api.Service with only the items we need for CoreDNS.
 type Service struct {
+	// Don't add new fields to this struct without talking to the CoreDNS maintainers.
 	Version      string
 	Name         string
 	Namespace    string
@@ -25,8 +26,14 @@ type Service struct {
 // ServiceKey return a string using for the index.
 func ServiceKey(name, namespace string) string { return name + "." + namespace }
 
-// ToService converts an api.Service to a *Service.
-func ToService(obj interface{}) interface{} {
+// ToService returns a function that converts an api.Service to a *Service.
+func ToService(skipCleanup bool) ToFunc {
+	return func(obj interface{}) interface{} {
+		return toService(skipCleanup, obj)
+	}
+}
+
+func toService(skipCleanup bool, obj interface{}) interface{} {
 	svc, ok := obj.(*api.Service)
 	if !ok {
 		return nil
@@ -45,7 +52,7 @@ func ToService(obj interface{}) interface{} {
 	}
 
 	if len(svc.Spec.Ports) == 0 {
-		// Add sentinal if there are no ports.
+		// Add sentinel if there are no ports.
 		s.Ports = []api.ServicePort{{Port: -1}}
 	} else {
 		s.Ports = make([]api.ServicePort, len(svc.Spec.Ports))
@@ -57,7 +64,9 @@ func ToService(obj interface{}) interface{} {
 		s.ExternalIPs[li+i] = lb.IP
 	}
 
-	*svc = api.Service{}
+	if !skipCleanup {
+		*svc = api.Service{}
+	}
 
 	return s
 }

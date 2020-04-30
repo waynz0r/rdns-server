@@ -1,6 +1,7 @@
 package forward
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -9,19 +10,14 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/metrics"
 	"github.com/coredns/coredns/plugin/pkg/parse"
+	"github.com/coredns/coredns/plugin/pkg/policy"
 	pkgtls "github.com/coredns/coredns/plugin/pkg/tls"
 	"github.com/coredns/coredns/plugin/pkg/transport"
 
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyfile"
+	"github.com/caddyserver/caddy"
 )
 
-func init() {
-	caddy.RegisterPlugin("forward", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("forward", setup) }
 
 func setup(c *caddy.Controller) error {
 	f, err := parseForward(c)
@@ -38,7 +34,7 @@ func setup(c *caddy.Controller) error {
 	})
 
 	c.OnStartup(func() error {
-		metrics.MustRegister(c, RequestCount, RcodeCount, RequestDuration, HealthcheckFailureCount, SocketGauge)
+		metrics.MustRegister(c, RequestCount, RcodeCount, RequestDuration, HealthcheckFailureCount, SocketGauge, MaxConcurrentRejectCount)
 		return f.OnStartup()
 	})
 
@@ -60,13 +56,10 @@ func (f *Forward) OnStartup() (err error) {
 // OnShutdown stops all configured proxies.
 func (f *Forward) OnShutdown() error {
 	for _, p := range f.proxies {
-		p.close()
+		p.stop()
 	}
 	return nil
 }
-
-// Close is a synonym for OnShutdown().
-func (f *Forward) Close() { f.OnShutdown() }
 
 func parseForward(c *caddy.Controller) (*Forward, error) {
 	var (
@@ -79,7 +72,7 @@ func parseForward(c *caddy.Controller) (*Forward, error) {
 			return nil, plugin.ErrOnce
 		}
 		i++
-		f, err = ParseForwardStanza(&c.Dispenser)
+		f, err = parseStanza(c)
 		if err != nil {
 			return nil, err
 		}
@@ -87,8 +80,7 @@ func parseForward(c *caddy.Controller) (*Forward, error) {
 	return f, nil
 }
 
-// ParseForwardStanza parses one forward stanza
-func ParseForwardStanza(c *caddyfile.Dispenser) (*Forward, error) {
+func parseStanza(c *caddy.Controller) (*Forward, error) {
 	f := New()
 
 	if !c.Args(&f.from) {
@@ -129,11 +121,13 @@ func ParseForwardStanza(c *caddyfile.Dispenser) (*Forward, error) {
 			f.proxies[i].SetTLSConfig(f.tlsConfig)
 		}
 		f.proxies[i].SetExpire(f.expire)
+		f.proxies[i].health.SetRecursionDesired(f.opts.hcRecursionDesired)
 	}
+
 	return f, nil
 }
 
-func parseBlock(c *caddyfile.Dispenser, f *Forward) error {
+func parseBlock(c *caddy.Controller, f *Forward) error {
 	switch c.Val() {
 	case "except":
 		ignore := c.RemainingArgs()
@@ -168,6 +162,16 @@ func parseBlock(c *caddyfile.Dispenser, f *Forward) error {
 			return fmt.Errorf("health_check can't be negative: %d", dur)
 		}
 		f.hcInterval = dur
+
+		for c.NextArg() {
+			switch hcOpts := c.Val(); hcOpts {
+			case "no_rec":
+				f.opts.hcRecursionDesired = false
+			default:
+				return fmt.Errorf("health_check: unknown option %s", hcOpts)
+			}
+		}
+
 	case "force_tcp":
 		if c.NextArg() {
 			return c.ArgErr()
@@ -212,14 +216,27 @@ func parseBlock(c *caddyfile.Dispenser, f *Forward) error {
 		}
 		switch x := c.Val(); x {
 		case "random":
-			f.p = &random{}
+			f.p = &policy.Random{}
 		case "round_robin":
-			f.p = &roundRobin{}
+			f.p = &policy.RoundRobin{}
 		case "sequential":
-			f.p = &sequential{}
+			f.p = &policy.Sequential{}
 		default:
 			return c.Errf("unknown policy '%s'", x)
 		}
+	case "max_concurrent":
+		if !c.NextArg() {
+			return c.ArgErr()
+		}
+		n, err := strconv.Atoi(c.Val())
+		if err != nil {
+			return err
+		}
+		if n < 0 {
+			return fmt.Errorf("max_concurrent can't be negative: %d", n)
+		}
+		f.ErrLimitExceeded = errors.New("concurrent queries exceeded maximum " + c.Val())
+		f.maxConcurrent = int64(n)
 
 	default:
 		return c.Errf("unknown property '%s'", c.Val())

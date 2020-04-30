@@ -8,16 +8,10 @@ import (
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
-func init() {
-	caddy.RegisterPlugin("chaos", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-
-}
+func init() { plugin.Register("chaos", setup) }
 
 func setup(c *caddy.Controller) error {
 	version, authors, err := parse(c)

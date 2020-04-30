@@ -12,17 +12,12 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/cache"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
 var log = clog.NewWithPlugin("dnssec")
 
-func init() {
-	caddy.RegisterPlugin("dnssec", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("dnssec", setup) }
 
 func setup(c *caddy.Controller) error {
 	zones, keys, capacity, splitkeys, err := dnssecParse(c)

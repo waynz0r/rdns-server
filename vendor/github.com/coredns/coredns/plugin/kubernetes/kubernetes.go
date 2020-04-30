@@ -43,11 +43,10 @@ type Kubernetes struct {
 	Fall             fall.F
 	ttl              uint32
 	opts             dnsControlOpts
-
-	primaryZoneIndex   int
-	interfaceAddrsFunc func() net.IP
-	autoPathSearch     []string // Local search path from /etc/resolv.conf. Needed for autopath.
-	TransferTo         []string
+	primaryZoneIndex int
+	localIPs         []net.IP
+	autoPathSearch   []string // Local search path from /etc/resolv.conf. Needed for autopath.
+	TransferTo       []string
 }
 
 // New returns a initialized Kubernetes. It default interfaceAddrFunc to return 127.0.0.1. All other
@@ -56,7 +55,6 @@ func New(zones []string) *Kubernetes {
 	k := new(Kubernetes)
 	k.Zones = zones
 	k.Namespaces = make(map[string]struct{})
-	k.interfaceAddrsFunc = func() net.IP { return net.ParseIP("127.0.0.1") }
 	k.podMode = podModeDisabled
 	k.ttl = defaultTTL
 
@@ -68,10 +66,10 @@ const (
 	podModeDisabled = "disabled"
 	// podModeVerified is where Pod requests are answered only if they exist
 	podModeVerified = "verified"
-	// podModeInsecure is where pod requests are answered without verfying they exist
+	// podModeInsecure is where pod requests are answered without verifying they exist
 	podModeInsecure = "insecure"
 	// DNSSchemaVersion is the schema version: https://github.com/kubernetes/dns/blob/master/docs/specification.md
-	DNSSchemaVersion = "1.0.1"
+	DNSSchemaVersion = "1.1.0"
 	// Svc is the DNS schema for kubernetes services
 	Svc = "svc"
 	// Pod is the DNS schema for kubernetes pods
@@ -107,17 +105,33 @@ func (k *Kubernetes) Services(ctx context.Context, state request.Request, exact 
 
 	case dns.TypeNS:
 		// We can only get here if the qname equals the zone, see ServeDNS in handler.go.
-		ns := k.nsAddr()
-		svc := msg.Service{Host: ns.A.String(), Key: msg.Path(state.QName(), coredns), TTL: k.ttl}
-		return []msg.Service{svc}, nil
+		nss := k.nsAddrs(false, state.Zone)
+		var svcs []msg.Service
+		for _, ns := range nss {
+			if ns.Header().Rrtype == dns.TypeA {
+				svcs = append(svcs, msg.Service{Host: ns.(*dns.A).A.String(), Key: msg.Path(ns.Header().Name, coredns), TTL: k.ttl})
+				continue
+			}
+			if ns.Header().Rrtype == dns.TypeAAAA {
+				svcs = append(svcs, msg.Service{Host: ns.(*dns.AAAA).AAAA.String(), Key: msg.Path(ns.Header().Name, coredns), TTL: k.ttl})
+			}
+		}
+		return svcs, nil
 	}
 
-	if state.QType() == dns.TypeA && isDefaultNS(state.Name(), state.Zone) {
-		// If this is an A request for "ns.dns", respond with a "fake" record for coredns.
-		// SOA records always use this hardcoded name
-		ns := k.nsAddr()
-		svc := msg.Service{Host: ns.A.String(), Key: msg.Path(state.QName(), coredns), TTL: k.ttl}
-		return []msg.Service{svc}, nil
+	if isDefaultNS(state.Name(), state.Zone) {
+		nss := k.nsAddrs(false, state.Zone)
+		var svcs []msg.Service
+		for _, ns := range nss {
+			if ns.Header().Rrtype == dns.TypeA && state.QType() == dns.TypeA {
+				svcs = append(svcs, msg.Service{Host: ns.(*dns.A).A.String(), Key: msg.Path(state.QName(), coredns), TTL: k.ttl})
+				continue
+			}
+			if ns.Header().Rrtype == dns.TypeAAAA && state.QType() == dns.TypeAAAA {
+				svcs = append(svcs, msg.Service{Host: ns.(*dns.AAAA).AAAA.String(), Key: msg.Path(state.QName(), coredns), TTL: k.ttl})
+			}
+		}
+		return svcs, nil
 	}
 
 	s, e := k.Records(ctx, state, false)
@@ -171,7 +185,7 @@ func (k *Kubernetes) getClientConfig() (*rest.Config, error) {
 	}
 
 	// Connect to API from out of cluster
-	// Only the first one is used. We will deprecated multiple endpoints later.
+	// Only the first one is used. We will deprecate multiple endpoints later.
 	clusterinfo.Server = k.APIServerList[0]
 
 	if len(k.APICertAuth) > 0 {
@@ -238,7 +252,7 @@ func (k *Kubernetes) InitKubeCache() (err error) {
 
 // Records looks up services in kubernetes.
 func (k *Kubernetes) Records(ctx context.Context, state request.Request, exact bool) ([]msg.Service, error) {
-	r, e := parseRequest(state)
+	r, e := parseRequest(state.Name(), state.Zone)
 	if e != nil {
 		return nil, e
 	}
@@ -261,33 +275,6 @@ func (k *Kubernetes) Records(ctx context.Context, state request.Request, exact b
 
 	services, err := k.findServices(r, state.Zone)
 	return services, err
-}
-
-// serviceFQDN returns the k8s cluster dns spec service FQDN for the service (or endpoint) object.
-func serviceFQDN(obj meta.Object, zone string) string {
-	return dnsutil.Join(obj.GetName(), obj.GetNamespace(), Svc, zone)
-}
-
-// podFQDN returns the k8s cluster dns spec FQDN for the pod.
-func podFQDN(p *object.Pod, zone string) string {
-	if strings.Contains(p.PodIP, ".") {
-		name := strings.Replace(p.PodIP, ".", "-", -1)
-		return dnsutil.Join(name, p.GetNamespace(), Pod, zone)
-	}
-
-	name := strings.Replace(p.PodIP, ":", "-", -1)
-	return dnsutil.Join(name, p.GetNamespace(), Pod, zone)
-}
-
-// endpointFQDN returns a list of k8s cluster dns spec service FQDNs for each subset in the endpoint.
-func endpointFQDN(ep *object.Endpoints, zone string, endpointNameMode bool) []string {
-	var names []string
-	for _, ss := range ep.Subsets {
-		for _, addr := range ss.Addresses {
-			names = append(names, dnsutil.Join(endpointHostname(addr, endpointNameMode), serviceFQDN(ep, zone)))
-		}
-	}
-	return names
 }
 
 func endpointHostname(addr object.EndpointAddress, endpointNameMode bool) string {
@@ -364,11 +351,6 @@ func (k *Kubernetes) findPods(r recordRequest, zone string) (pods []msg.Service,
 			continue
 		}
 
-		// exclude pods in the process of termination
-		if p.Deleting {
-			continue
-		}
-
 		// check for matching ip and namespace
 		if ip == p.PodIP && match(namespace, p.Namespace) {
 			s := msg.Service{Key: strings.Join([]string{zonePath, Pod, namespace, podname}, "/"), Host: ip, TTL: k.ttl}
@@ -431,7 +413,9 @@ func (k *Kubernetes) findServices(r recordRequest, zone string) (services []msg.
 			continue
 		}
 
-		if k.opts.ignoreEmptyService && svc.ClusterIP != api.ClusterIPNone {
+		// If "ignore empty_service" option is set and no endpoints exist, return NXDOMAIN unless
+		// it's a headless or externalName service (covered below).
+		if k.opts.ignoreEmptyService && svc.ClusterIP != api.ClusterIPNone && svc.Type != api.ServiceTypeExternalName {
 			// serve NXDOMAIN if no endpoint is able to answer
 			podsCount := 0
 			for _, ep := range endpointsListFunc() {

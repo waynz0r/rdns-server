@@ -8,16 +8,11 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 	"github.com/miekg/dns"
 )
 
-func init() {
-	caddy.RegisterPlugin("template", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setupTemplate,
-	})
-}
+func init() { plugin.Register("template", setupTemplate) }
 
 func setupTemplate(c *caddy.Controller) error {
 	handler, err := templateParse(c)
@@ -74,6 +69,7 @@ func templateParse(c *caddy.Controller) (handler Handler, err error) {
 		templatePrefix := ""
 
 		t.answer = make([]*gotmpl.Template, 0)
+		t.upstream = upstream.New()
 
 		for c.NextBlock() {
 			switch c.Val() {
@@ -144,8 +140,8 @@ func templateParse(c *caddy.Controller) (handler Handler, err error) {
 				t.fall.SetZonesFromArgs(c.RemainingArgs())
 
 			case "upstream":
-				c.RemainingArgs() // eat remaining args
-				t.upstream = upstream.New()
+				// remove soon
+				c.RemainingArgs()
 			default:
 				return handler, c.ArgErr()
 			}
@@ -153,10 +149,6 @@ func templateParse(c *caddy.Controller) (handler Handler, err error) {
 
 		if len(t.regex) == 0 {
 			t.regex = append(t.regex, regexp.MustCompile(".*"))
-		}
-
-		if len(t.answer) == 0 && len(t.authority) == 0 && t.rcode == dns.RcodeSuccess {
-			return handler, c.Errf("no answer section for template found: %v", handler)
 		}
 
 		handler.Templates = append(handler.Templates, t)

@@ -8,24 +8,18 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/metrics"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
-func init() {
-	caddy.RegisterPlugin("health", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("health", setup) }
 
 func setup(c *caddy.Controller) error {
-	addr, lame, err := healthParse(c)
+	addr, lame, err := parse(c)
 	if err != nil {
 		return plugin.Error("health", err)
 	}
 
-	h := newHealth(addr)
-	h.lameduck = lame
+	h := &health{Addr: addr, stop: make(chan bool), lameduck: lame}
 
 	c.OnStartup(func() error {
 		metrics.MustRegister(c, HealthDuration)
@@ -33,14 +27,15 @@ func setup(c *caddy.Controller) error {
 	})
 
 	c.OnStartup(h.OnStartup)
-	c.OnRestart(h.OnRestart)
+	c.OnRestart(h.OnFinalShutdown)
 	c.OnFinalShutdown(h.OnFinalShutdown)
+	c.OnRestartFailed(h.OnStartup)
 
 	// Don't do AddPlugin, as health is not *really* a plugin just a separate webserver running.
 	return nil
 }
 
-func healthParse(c *caddy.Controller) (string, time.Duration, error) {
+func parse(c *caddy.Controller) (string, time.Duration, error) {
 	addr := ""
 	dur := time.Duration(0)
 	for c.Next() {

@@ -22,7 +22,7 @@ grpc FROM TO...
 * **TO...** are the destination endpoints to proxy to. The number of upstreams is
   limited to 15.
 
-Multiple upstreams are randomized (see `policy`) on first use. When a proxy returns an error 
+Multiple upstreams are randomized (see `policy`) on first use. When a proxy returns an error
 the next upstream in the list is tried.
 
 Extra knobs are available with an expanded syntax:
@@ -60,11 +60,11 @@ Also note the TLS config is "global" for the whole grpc proxy if you need a diff
 
 ## Metrics
 
-If monitoring is enabled (via the *prometheus* directive) then the following metric are exported:
+If monitoring is enabled (via the *prometheus* plugin) then the following metric are exported:
 
 * `coredns_grpc_request_duration_seconds{to}` - duration per upstream interaction.
 * `coredns_grpc_request_count_total{to}` - query count per upstream.
-* `coredns_grpc_response_rcode_total{to, rcode}` - count of RCODEs per upstream.
+* `coredns_grpc_response_rcode_count_total{to, rcode}` - count of RCODEs per upstream.
   and we are randomly (this always uses the `random` policy) spraying to an upstream.
 
 ## Examples

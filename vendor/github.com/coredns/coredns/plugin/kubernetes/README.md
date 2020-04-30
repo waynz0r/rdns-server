@@ -2,7 +2,7 @@
 
 ## Name
 
-*kubernetes* - enables the reading zone data from a Kubernetes cluster.
+*kubernetes* - enables reading zone data from a Kubernetes cluster.
 
 ## Description
 
@@ -14,7 +14,7 @@ cluster.  See the [deployment](https://github.com/coredns/deployment) repository
 to deploy CoreDNS in Kubernetes](https://github.com/coredns/deployment/tree/master/kubernetes).
 
 [stubDomains and upstreamNameservers](https://kubernetes.io/blog/2017/04/configuring-private-dns-zones-upstream-nameservers-kubernetes/)
-are implemented via the *forward* plugin and kubernetes *upstream*. See the examples below.
+are implemented via the *forward* plugin. See the examples below.
 
 This plugin can only be used once per Server Block.
 
@@ -24,14 +24,13 @@ This plugin can only be used once per Server Block.
 kubernetes [ZONES...]
 ~~~
 
-With only the directive specified, the *kubernetes* plugin will default to the zone specified in
+With only the plugin specified, the *kubernetes* plugin will default to the zone specified in
 the server's block. It will handle all queries in that zone and connect to Kubernetes in-cluster. It
 will not provide PTR records for services or A records for pods. If **ZONES** is used it specifies
 all the zones the plugin should be authoritative for.
 
 ```
 kubernetes [ZONES...] {
-    resyncperiod DURATION
     endpoint URL
     tls CERT KEY CACERT
     kubeconfig KUBECONFIG CONTEXT
@@ -39,7 +38,6 @@ kubernetes [ZONES...] {
     labels EXPRESSION
     pods POD-MODE
     endpoint_pod_names
-    upstream [ADDRESS...]
     ttl TTL
     noendpoints
     transfer to ADDRESS...
@@ -48,8 +46,6 @@ kubernetes [ZONES...] {
 }
 ```
 
-* `resyncperiod` specifies the Kubernetes data API **DURATION** period. By
-  default resync is disabled (DURATION is zero).
 * `endpoint` specifies the **URL** for a remote k8s API endpoint.
    If omitted, it will connect to k8s in-cluster using the cluster service account.
 * `tls` **CERT** **KEY** **CACERT** are the TLS cert, key and the CA cert file names for remote k8s connection.
@@ -59,8 +55,8 @@ kubernetes [ZONES...] {
    If this option is omitted all namespaces are exposed
 * `namespace_labels` **EXPRESSION** only expose the records for Kubernetes namespaces that match this label selector.
    The label selector syntax is described in the
-   [Kubernetes User Guide - Labels](http://kubernetes.io/docs/user-guide/labels/). An example that
-   only exposes namespaces labeled as "istio-injection=enabled", would use: 
+   [Kubernetes User Guide - Labels](https://kubernetes.io/docs/user-guide/labels/). An example that
+   only exposes namespaces labeled as "istio-injection=enabled", would use:
    `labels istio-injection=enabled`.
 * `labels` **EXPRESSION** only exposes the records for Kubernetes objects that match this label selector.
    The label selector syntax is described in the
@@ -90,10 +86,6 @@ kubernetes [ZONES...] {
    follows: Use the hostname of the endpoint, or if hostname is not set, use the
    pod name of the pod targeted by the endpoint. If there is no pod targeted by
    the endpoint, use the dashed IP address form.
-* `upstream` [**ADDRESS**...] defines the upstream resolvers used for resolving services
-  that point to external hosts (aka External Services, aka CNAMEs).  If no **ADDRESS** is given, CoreDNS
-  will resolve External Services against itself. **ADDRESS** can be an IP, an IP:port, or a path
-  to a file structured like resolv.conf.
 * `ttl` allows you to set a custom TTL for responses. The default is 5 seconds.  The minimum TTL allowed is
   0 seconds, and the maximum is capped at 3600 seconds. Setting TTL to 0 will prevent records from being cached.
 * `noendpoints` will turn off the serving of endpoint records by disabling the watch on endpoints.
@@ -122,13 +114,12 @@ Kubernetes API.
 
 Handle all queries in the `cluster.local` zone. Connect to Kubernetes in-cluster. Also handle all
 `in-addr.arpa` `PTR` requests for `10.0.0.0/17` . Verify the existence of pods when answering pod
-requests. Resolve upstream records against `10.102.3.10`. Note we show the entire server block here:
+requests.
 
 ~~~ txt
 10.0.0.0/17 cluster.local {
     kubernetes {
         pods verified
-        upstream 10.102.3.10:53
     }
 }
 ~~~
@@ -153,15 +144,12 @@ kubernetes cluster.local {
 ## stubDomains and upstreamNameservers
 
 Here we use the *forward* plugin to implement a stubDomain that forwards `example.local` to the nameserver `10.100.0.10:53`.
-The *upstream* option in the *kubernetes* plugin means that ExternalName services (CNAMEs) will be resolved using the respective proxy.
 Also configured is an upstreamNameserver `8.8.8.8:53` that will be used for resolving names that do not fall in `cluster.local`
 or `example.local`.
 
 ~~~ txt
 cluster.local:53 {
-    kubernetes cluster.local {
-        upstream
-    }
+    kubernetes cluster.local
 }
 example.local {
     forward . 10.100.0.10:53
@@ -221,8 +209,39 @@ or the word "any"), then that label will match all values.  The labels that acce
  * multiple wildcards are allowed in a single query, e.g., `A` Request `*.*.svc.zone.` or `SRV` request `*.*.*.*.svc.zone.`
 
  For example, wildcards can be used to resolve all Endpoints for a Service as `A` records. e.g.: `*.service.ns.svc.myzone.local` will return the Endpoint IPs in the Service `service` in namespace `default`:
- ```
+
+```
 *.service.default.svc.cluster.local. 5	IN A	192.168.10.10
 *.service.default.svc.cluster.local. 5	IN A	192.168.25.15
 ```
- This response can be randomized using the `loadbalance` plugin
+
+## Metadata
+
+The kubernetes plugin will publish the following metadata, if the *metadata*
+plugin is also enabled:
+
+ * kubernetes/endpoint: the endpoint name in the query
+ * kubernetes/kind: the resource kind (pod or svc) in the query
+ * kubernetes/namespace: the namespace in the query
+ * kubernetes/port-name: the port name in an SRV query
+ * kubernetes/protocol: the protocol in an SRV query
+ * kubernetes/service: the service name in the query
+ * kubernetes/client-namespace: the client pod's namespace, if `pods verified` mode is enabled
+ * kubernetes/client-pod-name: the client pod's name, if `pods verified` mode is enabled
+
+## Metrics
+
+If monitoring is enabled (via the *prometheus* plugin) then the following metrics are exported:
+
+* `coredns_kubernetes_dns_programming_duration_seconds{service_kind}` - Exports the
+  [DNS programming latency SLI](https://github.com/kubernetes/community/blob/master/sig-scalability/slos/dns_programming_latency.md).
+  The metrics has the `service_kind` label that identifies the kind of the
+  [kubernetes service](https://kubernetes.io/docs/concepts/services-networking/service).
+  It may take one of the three values:
+    * `cluster_ip`
+    * `headless_with_selector`
+    * `headless_without_selector`
+
+## Bugs
+
+The duration metric only supports the "headless\_with\_selector" service currently.

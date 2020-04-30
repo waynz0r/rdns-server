@@ -5,22 +5,14 @@ import (
 
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
-	clog "github.com/coredns/coredns/plugin/pkg/log"
 	mwtls "github.com/coredns/coredns/plugin/pkg/tls"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
 
-	etcdcv3 "github.com/coreos/etcd/clientv3"
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
+	etcdcv3 "go.etcd.io/etcd/clientv3"
 )
 
-var log = clog.NewWithPlugin("etcd")
-
-func init() {
-	caddy.RegisterPlugin("etcd", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("etcd", setup) }
 
 func setup(c *caddy.Controller) error {
 	e, err := etcdParse(c)
@@ -45,6 +37,9 @@ func etcdParse(c *caddy.Controller) (*Etcd, error) {
 		username  string
 		password  string
 	)
+
+	etc.Upstream = upstream.New()
+
 	for c.Next() {
 		etc.Zones = c.RemainingArgs()
 		if len(etc.Zones) == 0 {
@@ -75,9 +70,8 @@ func etcdParse(c *caddy.Controller) (*Etcd, error) {
 				}
 				endpoints = args
 			case "upstream":
-				// check args != 0 and error in the future
-				c.RemainingArgs() // clear buffer
-				etc.Upstream = upstream.New()
+				// remove soon
+				c.RemainingArgs()
 			case "tls": // cert key cacertfile
 				args := c.RemainingArgs()
 				tlsConfig, err = mwtls.NewTLSConfigFromArgs(args...)

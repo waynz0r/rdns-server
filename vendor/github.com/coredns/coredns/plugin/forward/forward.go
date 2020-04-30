@@ -8,11 +8,13 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/debug"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
+	"github.com/coredns/coredns/plugin/pkg/policy"
 	"github.com/coredns/coredns/request"
 
 	"github.com/miekg/dns"
@@ -24,8 +26,10 @@ var log = clog.NewWithPlugin("forward")
 // Forward represents a plugin instance that can proxy requests to another (DNS) server. It has a list
 // of proxies each representing one upstream proxy.
 type Forward struct {
+	concurrent int64 // atomic counters need to be first in struct for proper alignment
+
 	proxies    []*Proxy
-	p          Policy
+	p          policy.Policy
 	hcInterval time.Duration
 
 	from    string
@@ -35,15 +39,20 @@ type Forward struct {
 	tlsServerName string
 	maxfails      uint32
 	expire        time.Duration
+	maxConcurrent int64
 
 	opts options // also here for testing
+
+	// ErrLimitExceeded indicates that a query was rejected because the number of concurrent queries has exceeded
+	// the maximum allowed (maxConcurrent)
+	ErrLimitExceeded error
 
 	Next plugin.Handler
 }
 
 // New returns a new Forward.
 func New() *Forward {
-	f := &Forward{maxfails: 2, tlsConfig: new(tls.Config), expire: defaultExpire, p: new(random), from: ".", hcInterval: hcInterval}
+	f := &Forward{maxfails: 2, tlsConfig: new(tls.Config), expire: defaultExpire, p: new(policy.Random), from: ".", hcInterval: hcInterval, opts: options{forceTCP: false, preferUDP: false, hcRecursionDesired: true}}
 	return f
 }
 
@@ -65,6 +74,15 @@ func (f *Forward) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 	state := request.Request{W: w, Req: r}
 	if !f.match(state) {
 		return plugin.NextOrFailure(f.Name(), f.Next, ctx, w, r)
+	}
+
+	if f.maxConcurrent > 0 {
+		count := atomic.AddInt64(&(f.concurrent), 1)
+		defer atomic.AddInt64(&(f.concurrent), -1)
+		if count > f.maxConcurrent {
+			MaxConcurrentRejectCount.Add(1)
+			return dns.RcodeServerFailure, f.ErrLimitExceeded
+		}
 	}
 
 	fails := 0
@@ -89,10 +107,10 @@ func (f *Forward) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 			if fails < len(f.proxies) {
 				continue
 			}
-			// All upstream proxies are dead, assume healtcheck is completely broken and randomly
+			// All upstream proxies are dead, assume healthcheck is completely broken and randomly
 			// select an upstream to connect to.
-			r := new(random)
-			proxy = r.List(f.proxies)[0]
+			r := new(policy.Random)
+			proxy = r.List(f.proxies)[0].([]*Proxy)[0]
 
 			HealthcheckBrokenCount.Add(1)
 		}
@@ -109,14 +127,11 @@ func (f *Forward) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 		opts := f.opts
 		for {
 			ret, err = proxy.Connect(ctx, state, opts)
-			if err == nil {
-				break
-			}
 			if err == ErrCachedClosed { // Remote side closed conn, can only happen with TCP.
 				continue
 			}
 			// Retry with TCP if truncated and prefer_udp configured.
-			if ret != nil && ret.Truncated && !opts.forceTCP && f.opts.preferUDP {
+			if ret != nil && ret.Truncated && !opts.forceTCP && opts.preferUDP {
 				opts.forceTCP = true
 				continue
 			}
@@ -191,7 +206,12 @@ func (f *Forward) ForceTCP() bool { return f.opts.forceTCP }
 func (f *Forward) PreferUDP() bool { return f.opts.preferUDP }
 
 // List returns a set of proxies to be used for this client depending on the policy in f.
-func (f *Forward) List() []*Proxy { return f.p.List(f.proxies) }
+func (f *Forward) List() []*Proxy {
+	if len(f.p.List(f.proxies)) == 1 {
+		return f.p.List(f.proxies)[0].([]*Proxy)
+	}
+	return nil
+}
 
 var (
 	// ErrNoHealthy means no healthy proxies left.
@@ -202,19 +222,11 @@ var (
 	ErrCachedClosed = errors.New("cached connection was closed by peer")
 )
 
-// policy tells forward what policy for selecting upstream it uses.
-type policy int
-
-const (
-	randomPolicy policy = iota
-	roundRobinPolicy
-	sequentialPolicy
-)
-
 // options holds various options that can be set.
 type options struct {
-	forceTCP  bool
-	preferUDP bool
+	forceTCP           bool
+	preferUDP          bool
+	hcRecursionDesired bool
 }
 
 const defaultTimeout = 5 * time.Second

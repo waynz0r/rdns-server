@@ -3,24 +3,18 @@ package pprof
 import (
 	"net"
 	"strconv"
-	"sync"
 
 	"github.com/coredns/coredns/plugin"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
 var log = clog.NewWithPlugin("pprof")
 
 const defaultAddr = "localhost:6053"
 
-func init() {
-	caddy.RegisterPlugin("pprof", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("pprof", setup) }
 
 func setup(c *caddy.Controller) error {
 	h := &handler{addr: defaultAddr}
@@ -67,12 +61,7 @@ func setup(c *caddy.Controller) error {
 
 	}
 
-	pprofOnce.Do(func() {
-		c.OnStartup(h.Startup)
-		c.OnShutdown(h.Shutdown)
-	})
-
+	c.OnStartup(h.Startup)
+	c.OnShutdown(h.Shutdown)
 	return nil
 }
-
-var pprofOnce sync.Once

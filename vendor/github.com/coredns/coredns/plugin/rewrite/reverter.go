@@ -1,10 +1,11 @@
 package rewrite
 
 import (
-	"github.com/miekg/dns"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/miekg/dns"
 )
 
 // ResponseRule contains a rule to rewrite a response with.
@@ -13,7 +14,7 @@ type ResponseRule struct {
 	Type        string
 	Pattern     *regexp.Regexp
 	Replacement string
-	Ttl         uint32
+	TTL         uint32
 }
 
 // ResponseReverter reverses the operations done on the question section of a packet.
@@ -39,10 +40,12 @@ func (r *ResponseReverter) WriteMsg(res *dns.Msg) error {
 	res.Question[0] = r.originalQuestion
 	if r.ResponseRewrite {
 		for _, rr := range res.Answer {
-			var isNameRewritten bool = false
-			var isTtlRewritten bool = false
-			var name string = rr.Header().Name
-			var ttl uint32 = rr.Header().Ttl
+			var (
+				isNameRewritten bool
+				isTTLRewritten  bool
+				name            = rr.Header().Name
+				ttl             = rr.Header().Ttl
+			)
 			for _, rule := range r.ResponseRules {
 				if rule.Type == "" {
 					rule.Type = "name"
@@ -56,21 +59,19 @@ func (r *ResponseReverter) WriteMsg(res *dns.Msg) error {
 					s := rule.Replacement
 					for groupIndex, groupValue := range regexGroups {
 						groupIndexStr := "{" + strconv.Itoa(groupIndex) + "}"
-						if strings.Contains(s, groupIndexStr) {
-							s = strings.Replace(s, groupIndexStr, groupValue, -1)
-						}
+						s = strings.Replace(s, groupIndexStr, groupValue, -1)
 					}
 					name = s
 					isNameRewritten = true
 				case "ttl":
-					ttl = rule.Ttl
-					isTtlRewritten = true
+					ttl = rule.TTL
+					isTTLRewritten = true
 				}
 			}
-			if isNameRewritten == true {
+			if isNameRewritten {
 				rr.Header().Name = name
 			}
-			if isTtlRewritten == true {
+			if isTTLRewritten {
 				rr.Header().Ttl = ttl
 			}
 		}

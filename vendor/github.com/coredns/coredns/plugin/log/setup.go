@@ -8,16 +8,11 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/replacer"
 	"github.com/coredns/coredns/plugin/pkg/response"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 	"github.com/miekg/dns"
 )
 
-func init() {
-	caddy.RegisterPlugin("log", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("log", setup) }
 
 func setup(c *caddy.Controller) error {
 	rules, err := logParse(c)
@@ -104,7 +99,7 @@ func logParse(c *caddy.Controller) ([]Rule, error) {
 			classes[response.All] = struct{}{}
 		}
 
-		for i := len(rules) - 1; i >= length; i -= 1 {
+		for i := len(rules) - 1; i >= length; i-- {
 			rules[i].Class = classes
 		}
 	}

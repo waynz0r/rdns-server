@@ -7,15 +7,10 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/parse"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
-func init() {
-	caddy.RegisterPlugin("secondary", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("secondary", setup) }
 
 func setup(c *caddy.Controller) error {
 	zones, err := secondaryParse(c)
@@ -29,8 +24,8 @@ func setup(c *caddy.Controller) error {
 		if len(z.TransferFrom) > 0 {
 			c.OnStartup(func() error {
 				z.StartupOnce.Do(func() {
-					z.TransferIn()
 					go func() {
+						z.TransferIn()
 						z.Update()
 					}()
 				})
@@ -78,7 +73,8 @@ func secondaryParse(c *caddy.Controller) (file.Zones, error) {
 						return file.Zones{}, e
 					}
 				case "upstream":
-					c.RemainingArgs() // eat args
+					// remove soon
+					c.RemainingArgs()
 				default:
 					return file.Zones{}, c.Errf("unknown property '%s'", c.Val())
 				}

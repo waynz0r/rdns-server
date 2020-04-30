@@ -15,7 +15,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-// Cache is plugin that looks up responses in a cache and caches replies.
+// Cache is a plugin that looks up responses in a cache and caches replies.
 // It has a success and a denial of existence cache.
 type Cache struct {
 	Next  plugin.Handler
@@ -35,6 +35,8 @@ type Cache struct {
 	prefetch   int
 	duration   time.Duration
 	percentage int
+
+	staleUpTo time.Duration
 
 	// Testing.
 	now func() time.Time
@@ -163,6 +165,9 @@ func (w *ResponseWriter) WriteMsg(res *dns.Msg) error {
 	var duration time.Duration
 	if mt == response.NameError || mt == response.NoData {
 		duration = computeTTL(msgTTL, w.minnttl, w.nttl)
+	} else if mt == response.ServerError {
+		// use default ttl which is 5s
+		duration = minTTL
 	} else {
 		duration = computeTTL(msgTTL, w.minpttl, w.pttl)
 	}
@@ -205,8 +210,12 @@ func (w *ResponseWriter) set(m *dns.Msg, key uint64, mt response.Type, duration 
 	case response.NoError, response.Delegation:
 		i := newItem(m, w.now(), duration)
 		w.pcache.Add(key, i)
+		// when pre-fetching, remove the negative cache entry if it exists
+		if w.prefetch {
+			w.ncache.Remove(key)
+		}
 
-	case response.NameError, response.NoData:
+	case response.NameError, response.NoData, response.ServerError:
 		i := newItem(m, w.now(), duration)
 		w.ncache.Add(key, i)
 

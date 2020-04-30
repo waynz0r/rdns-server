@@ -6,37 +6,35 @@ import (
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
-func init() {
-	caddy.RegisterPlugin("ready", caddy.Plugin{
-		ServerType: "dns",
-		Action:     setup,
-	})
-}
+func init() { plugin.Register("ready", setup) }
 
 func setup(c *caddy.Controller) error {
 	addr, err := parse(c)
 	if err != nil {
 		return plugin.Error("ready", err)
 	}
-
 	rd := &ready{Addr: addr}
 
-	uniqAddr.Set(addr, rd.onStartup, rd)
+	uniqAddr.Set(addr, rd.onStartup)
+	c.OnStartup(func() error { uniqAddr.Set(addr, rd.onStartup); return nil })
+	c.OnRestartFailed(func() error { uniqAddr.Set(addr, rd.onStartup); return nil })
 
-	c.OncePerServerBlock(func() error {
-		c.OnStartup(func() error {
-			return uniqAddr.ForEach()
-		})
-		return nil
-	})
+	c.OnStartup(func() error { return uniqAddr.ForEach() })
+	c.OnRestartFailed(func() error { return uniqAddr.ForEach() })
 
 	c.OnStartup(func() error {
-		// Each plugin in this server block will (if they support it) report readiness.
-		plugs := dnsserver.GetConfig(c).Handlers()
-		for _, p := range plugs {
+		for _, p := range dnsserver.GetConfig(c).Handlers() {
+			if r, ok := p.(Readiness); ok {
+				plugins.Append(r, p.Name())
+			}
+		}
+		return nil
+	})
+	c.OnRestartFailed(func() error {
+		for _, p := range dnsserver.GetConfig(c).Handlers() {
 			if r, ok := p.(Readiness); ok {
 				plugins.Append(r, p.Name())
 			}
@@ -44,14 +42,14 @@ func setup(c *caddy.Controller) error {
 		return nil
 	})
 
-	c.OnRestart(rd.onRestart)
+	c.OnRestart(rd.onFinalShutdown)
 	c.OnFinalShutdown(rd.onFinalShutdown)
 
 	return nil
 }
 
 func parse(c *caddy.Controller) (string, error) {
-	addr := ""
+	addr := ":8181"
 	i := 0
 	for c.Next() {
 		if i > 0 {
