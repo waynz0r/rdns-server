@@ -9,8 +9,11 @@ import (
 	"time"
 )
 
+const StorageName = "filesystem"
+
 type Filesystem struct {
 	path string
+	mux  sync.Mutex
 }
 
 var mux = sync.Mutex{}
@@ -30,7 +33,10 @@ func New(dsn string, valueTypes []string) (*Filesystem, error) {
 		}
 	}
 
-	return &Filesystem{path: dsn}, nil
+	return &Filesystem{
+		path: dsn,
+		mux:  sync.Mutex{},
+	}, nil
 }
 
 func (fs *Filesystem) SetValue(name, valueType string, metadata interface{}) error {
@@ -42,8 +48,8 @@ func (fs *Filesystem) UpdateValue(name, valueType string, metadata interface{}) 
 }
 
 func (fs *Filesystem) writeValue(name, valueType string, metadata interface{}, update bool) error {
-	mux.Lock()
-	defer mux.Unlock()
+	fs.mux.Lock()
+	defer fs.mux.Unlock()
 
 	filename := path.Join(fs.path, valueType, name)
 
@@ -94,8 +100,8 @@ func (fs *Filesystem) GetExpiredValues(valueType string, t *time.Time) ([]string
 }
 
 func (fs *Filesystem) DeleteValue(name, valueType string) error {
-	mux.Lock()
-	defer mux.Unlock()
+	fs.mux.Lock()
+	defer fs.mux.Unlock()
 
 	filename := path.Join(fs.path, valueType, name)
 	if fileExists(filename) {
@@ -123,8 +129,8 @@ func (fs *Filesystem) ListValues(valueType string) ([]string, error) {
 }
 
 func (fs *Filesystem) GetValue(name, valueType string, metadata interface{}) (string, error) {
-	mux.Lock()
-	defer mux.Unlock()
+	fs.mux.Lock()
+	defer fs.mux.Unlock()
 
 	filename := path.Join(fs.path, valueType, name)
 	f, err := os.Open(filename)
