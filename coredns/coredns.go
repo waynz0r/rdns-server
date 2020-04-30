@@ -12,7 +12,7 @@ import (
 	"github.com/rancher/rdns-server/coredns/plugin/rdns"
 
 	"github.com/coredns/coredns/core/dnsserver"
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	// Plug in CoreDNS

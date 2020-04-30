@@ -10,7 +10,9 @@ import (
 	"github.com/rancher/rdns-server/database"
 	"github.com/rancher/rdns-server/database/keyvalue"
 	"github.com/rancher/rdns-server/database/keyvalue/filesystem"
+	"github.com/rancher/rdns-server/database/keyvalue/k8s"
 	"github.com/rancher/rdns-server/database/mysql"
+	k8sclient "github.com/rancher/rdns-server/k8s/client"
 	"github.com/rancher/rdns-server/metric"
 	"github.com/rancher/rdns-server/purge"
 	"github.com/rancher/rdns-server/service"
@@ -29,6 +31,8 @@ var (
 		"DATABASE_LEASE_TIME":   {"used to set database lease time.": "240h"},
 		"DSN":                   {"used to set database dsn.": ""},
 		"TTL":                   {"used to set route53 ttl.": "10"},
+		"KVBACKEND_STORAGE":     {"used to set KV backend underlaying storage.": "filesystem"},
+		"NAMESPACE":             {"used to set K8s namespace for the K8s KV backend": "rdns-store"},
 	}
 )
 
@@ -106,11 +110,35 @@ func setDatabase(c *cli.Context) (d *mysql.Database, err error) {
 		}
 		database.SetDatabase(d)
 	case keyvalue.DriverName:
-		s, err := filesystem.New(c.String("dsn"), keyvalue.ValueTypes)
-		if err != nil {
-			return nil, err
+		var storage keyvalue.KeyValueStore
+		switch c.String("kvbackend_storage") {
+		case filesystem.StorageName:
+			storage, err = filesystem.New(c.String("dsn"), keyvalue.ValueTypes)
+			if err != nil {
+				return nil, err
+			}
+
+		case k8s.StorageName:
+			config, err := k8sclient.GetConfigWithContext("", "")
+			if err != nil {
+				return nil, err
+			}
+
+			q := make(chan struct{})
+			mgr, err := k8sclient.NewManager(config, q, k8sclient.ManagerOptions{})
+			if err != nil {
+				return nil, err
+			}
+
+			storage, err = k8s.New(mgr, c.String("namespace"))
+			if err != nil {
+				return nil, err
+			}
+		default:
+			return nil, errors.New("no suitable kv backend storage found")
 		}
-		database.SetDatabase(keyvalue.NewKeyValueBackend(s))
+
+		database.SetDatabase(keyvalue.NewKeyValueBackend(storage))
 	default:
 		return nil, errors.New("no suitable database found")
 	}

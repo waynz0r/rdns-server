@@ -85,7 +85,7 @@ def test_server_apis():  # NOQA
     assert response != ""
     result = response.json()
     assert result['status'] == 200
-    assert result['data']['expiration'] > expiration_time
+    assert result['data']['expiration'] >= expiration_time
 
     # test delete
     url = build_url(BASE_URL, "/" + fqdn, "")
